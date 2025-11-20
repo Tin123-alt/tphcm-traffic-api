@@ -62,3 +62,53 @@ async def summarize_text(text: str):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
+        # ================== TÓM TẮT BÀI BÁO MỚI (KHÔNG CẦN TRONG CSV) ==================
+from fastapi import HTTPException
+
+# Dán 2 hàm tóm tắt thật của bạn vào đây (tìm trong file hiện tại)
+# Thường tên là: summarize_with_textrank, textrank_summarization, kmeans_summarize, v.v.
+
+# Ví dụ (bạn thay bằng hàm thật của bạn):
+def textrank_summary(text: str) -> str:
+    # ← Copy nguyên hàm TextRank bạn đã viết (dùng networkx, nltk, gensim...)
+    # Nếu chưa có, mình gửi mẫu chuẩn ở dưới
+    from sumy.parsers.plaintext import PlaintextParser
+    from sumy.nlp.tokenizers import Tokenizer
+    from sumy.summarizers.text_rank import TextRankSummarizer
+    parser = PlaintextParser.from_string(text, Tokenizer("english"))
+    summarizer = TextRankSummarizer()
+    summary = summarizer(parser.document, 5)  # 5 câu
+    return " ".join([str(sentence) for sentence in summary])
+
+def kmeans_summary(text: str) -> str:
+    # ← Copy nguyên hàm KMeans clustering bạn đã viết
+    # Nếu chưa có, dùng mẫu đơn giản:
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.cluster import KMeans
+    sentences = text.split(".")
+    if len(sentences) < 4:
+        return text.strip()
+    vectorizer = TfidfVectorizer()
+    X = vectorizer.fit_transform(sentences)
+    kmeans = KMeans(n_clusters=4, random_state=42).fit(X)
+    summary_sentences = []
+    for i in range(4):
+        cluster_sentences = [s for j, s in enumerate(sentences) if kmeans.labels_[j] == i]
+        if cluster_sentences:
+            summary_sentences.append(max(cluster_sentences, key=len))
+    return ". ".join(summary_sentences).strip()
+
+@app.post("/summarize")
+async def summarize_new_article(text: str = "Dán bài báo vào đây"):
+    if not text or len(text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Bài báo quá ngắn!")
+    
+    try:
+        textrank = textrank_summary(text)
+        kmeans = kmeans_summary(text)
+        return {
+            "textrank_summary": textrank,
+            "kmeans_summary": kmeans
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
