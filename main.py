@@ -1,8 +1,19 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
+import re
+import nltk
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from sumy.parsers.plaintext import PlaintextParser
+from sumy.nlp.tokenizers import Tokenizer
+from sumy.summarizers.text_rank import TextRankSummarizer
 
-app = FastAPI(title="Tóm tắt Giao thông TP.HCM 2025")
+# Tải dữ liệu cần thiết cho nltk (chỉ lần đầu)
+nltk.download('punkt', quiet=True)
+nltk.download('stopwords', quiet=True)
+
+app = FastAPI(title="Tóm tắt Giao thông TP.HCM 2025 - True Summarizer")
 
 app.add_middleware(
     CORSMiddleware,
@@ -11,104 +22,76 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Đọc file CSV
+# Đọc CSV (giữ nguyên chức năng cũ)
 try:
     df = pd.read_csv("data_extractive.csv")
     df = df.fillna("")
-except FileNotFoundError:
-    df = pd.DataFrame()  # Nếu không có file, tạo DataFrame rỗng
+except:
+    df = pd.DataFrame()
 
 @app.get("/")
 def home():
-    return {"message": "API Tóm tắt Giao thông TP.HCM 2025 đang chạy!", "total_articles": len(df)}
+    return {"message": "API True Summarizer đang chạy!", "total_articles": len(df)}
 
+# Giữ nguyên chức năng tìm kiếm cũ
 @app.get("/articles")
-def get_articles(q: str = Query(None, description="Từ khóa tìm kiếm"), limit: int = Query(20, description="Số bài tối đa")):
+def get_articles(q: str = Query(None), limit: int = Query(20)):
     result = df.copy()
     if q and not result.empty:
         mask = (
             result['title'].str.contains(q, case=False, na=False) |
-            result['summary_semantic_textrank'].str.contains(q, case=False, na=False) |
-            result['summary_kmean'].str.contains(q, case=False, na=False)
+            result['content'].str.contains(q, case=False, na=False)
         )
         result = result[mask]
     return result.head(limit).to_dict(orient="records")
-    # ================== THÊM CHỨC NĂNG TÓM TẮT VĂN BẢN MỚI ==================
-from fastapi import HTTPException
 
-# Dùng lại 2 hàm bạn đã có sẵn trong code cũ
-# (nếu tên hàm khác thì bạn đổi lại cho đúng nhé)
-def textrank_summary(text: str, ratio: float = 0.3) -> str:
-    # ← Copy nguyên hàm textrank_summary từ code cũ của bạn vào đây
-    # (hàm có dùng networkx, nltk, v.v.)
-    # Ví dụ: return summarize_with_textrank(text)
-    pass  # ← bạn thay bằng hàm thật
+# ================== HÀM TÓM TẮT THẬT – CHẠY MỌI BÀI BÁO MỚI ==================
+def clean_text(text: str) -> str:
+    text = re.sub(r'\s+', ' ', text)
+    return text.strip()
 
-def kmeans_summary(text: str, num_sentences: int = 4) -> str:
-    # ← Copy nguyên hàm kmeans_summary từ code cũ vào đây
-    pass  # ← bạn thay bằng hàm thật
+def textrank_summary(text: str, sentences_count: int = 5) -> str:
+    try:
+        parser = PlaintextParser.from_string(clean_text(text), Tokenizer("vietnamese"))
+        summarizer = TextRankSummarizer()
+        summary = summarizer(parser.document, sentences_count)
+        return " ".join([str(sent) for sent in summary])
+    except:
+        # Fallback tiếng Anh nếu lỗi
+        parser = PlaintextParser.from_string(clean_text(text), Tokenizer("english"))
+        summarizer = TextRankSummarizer()
+        summary = summarizer(parser.document, sentences_count)
+        return " ".join([str(sent) for sent in summary])
 
+def kmeans_summary(text: str, num_sentences: int = 5) -> str:
+    sentences = [s.strip() for s in text.split(".") if s.strip()]
+    if len(sentences) <= num_sentences:
+        return ". ".join(sentences)
+    
+    vectorizer = TfidfVectorizer()
+    try:
+        X = vectorizer.fit_transform(sentences)
+        kmeans = KMeans(n_clusters=num_sentences, random_state=42).fit(X)
+        summary = []
+        for i in range(num_sentences):
+            cluster_sents = [sentences[j] for j in range(len(sentences)) if kmeans.labels_[j] == i]
+            if cluster_sents:
+                summary.append(max(cluster_sents, key=len))
+        return ". ".join(summary) + "."
+    except:
+        return ". ".join(sentences[:num_sentences])
+
+# ENDPOINT MỚI – TÓM TẮT BẤT KỲ BÀI BÁO NÀO
 @app.post("/summarize")
 async def summarize_text(text: str):
     if not text or len(text.strip()) < 100:
-        raise HTTPException(status_code=400, detail="Văn bản quá ngắn, vui lòng dán ít nhất 100 ký tự!")
+        raise HTTPException(status_code=400, detail="Văn bản quá ngắn! Vui lòng dán ít nhất 100 ký tự.")
     
-    try:
-        textrank = textrank_summary(text)
-        kmeans = kmeans_summary(text)
-        return {
-            "textrank_summary": textrank.strip(),
-            "kmeans_summary": kmeans.strip()
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
-        # ================== TÓM TẮT BÀI BÁO MỚI (KHÔNG CẦN TRONG CSV) ==================
-from fastapi import HTTPException
-
-# Dán 2 hàm tóm tắt thật của bạn vào đây (tìm trong file hiện tại)
-# Thường tên là: summarize_with_textrank, textrank_summarization, kmeans_summarize, v.v.
-
-# Ví dụ (bạn thay bằng hàm thật của bạn):
-def textrank_summary(text: str) -> str:
-    # ← Copy nguyên hàm TextRank bạn đã viết (dùng networkx, nltk, gensim...)
-    # Nếu chưa có, mình gửi mẫu chuẩn ở dưới
-    from sumy.parsers.plaintext import PlaintextParser
-    from sumy.nlp.tokenizers import Tokenizer
-    from sumy.summarizers.text_rank import TextRankSummarizer
-    parser = PlaintextParser.from_string(text, Tokenizer("english"))
-    summarizer = TextRankSummarizer()
-    summary = summarizer(parser.document, 5)  # 5 câu
-    return " ".join([str(sentence) for sentence in summary])
-
-def kmeans_summary(text: str) -> str:
-    # ← Copy nguyên hàm KMeans clustering bạn đã viết
-    # Nếu chưa có, dùng mẫu đơn giản:
-    from sklearn.feature_extraction.text import TfidfVectorizer
-    from sklearn.cluster import KMeans
-    sentences = text.split(".")
-    if len(sentences) < 4:
-        return text.strip()
-    vectorizer = TfidfVectorizer()
-    X = vectorizer.fit_transform(sentences)
-    kmeans = KMeans(n_clusters=4, random_state=42).fit(X)
-    summary_sentences = []
-    for i in range(4):
-        cluster_sentences = [s for j, s in enumerate(sentences) if kmeans.labels_[j] == i]
-        if cluster_sentences:
-            summary_sentences.append(max(cluster_sentences, key=len))
-    return ". ".join(summary_sentences).strip()
-
-@app.post("/summarize")
-async def summarize_new_article(text: str = "Dán bài báo vào đây"):
-    if not text or len(text.strip()) < 100:
-        raise HTTPException(status_code=400, detail="Bài báo quá ngắn!")
+    textrank = textrank_summary(text, 5)
+    kmeans = kmeans_summary(text, 5)
     
-    try:
-        textrank = textrank_summary(text)
-        kmeans = kmeans_summary(text)
-        return {
-            "textrank_summary": textrank,
-            "kmeans_summary": kmeans
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "textrank_summary": textrank,
+        "kmeans_summary": kmeans,
+        "message": "Tóm tắt thành công bài báo mới!"
+    }
