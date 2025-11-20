@@ -33,3 +33,32 @@ def get_articles(q: str = Query(None, description="Từ khóa tìm kiếm"), lim
         )
         result = result[mask]
     return result.head(limit).to_dict(orient="records")
+    # ================== THÊM CHỨC NĂNG TÓM TẮT VĂN BẢN MỚI ==================
+from fastapi import HTTPException
+
+# Dùng lại 2 hàm bạn đã có sẵn trong code cũ
+# (nếu tên hàm khác thì bạn đổi lại cho đúng nhé)
+def textrank_summary(text: str, ratio: float = 0.3) -> str:
+    # ← Copy nguyên hàm textrank_summary từ code cũ của bạn vào đây
+    # (hàm có dùng networkx, nltk, v.v.)
+    # Ví dụ: return summarize_with_textrank(text)
+    pass  # ← bạn thay bằng hàm thật
+
+def kmeans_summary(text: str, num_sentences: int = 4) -> str:
+    # ← Copy nguyên hàm kmeans_summary từ code cũ vào đây
+    pass  # ← bạn thay bằng hàm thật
+
+@app.post("/summarize")
+async def summarize_text(text: str):
+    if not text or len(text.strip()) < 100:
+        raise HTTPException(status_code=400, detail="Văn bản quá ngắn, vui lòng dán ít nhất 100 ký tự!")
+    
+    try:
+        textrank = textrank_summary(text)
+        kmeans = kmeans_summary(text)
+        return {
+            "textrank_summary": textrank.strip(),
+            "kmeans_summary": kmeans.strip()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Lỗi xử lý: {str(e)}")
